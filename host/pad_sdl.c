@@ -44,6 +44,7 @@ static struct {
     uint16_t rumble_lo, rumble_hi;
     int64_t rumble_ns;
     uint8_t hd, hd_kind, hd_ever;   /* HD rumble (hd_rumble.h): HD_RUMBLE_UNKNOWN / ON / OFF, the pad's kind, sent once */
+    uint8_t valve;   /* Valve's (vendor 0x28DE: a Steam Controller, or Steam Input's virtual pad): pad_triton.c may play it */
     uint8_t hd_sent[HD_RUMBLE_PACKET_SIZE];
     int64_t hd_ns;
     int motion, motion_on;
@@ -103,6 +104,8 @@ static int pads_start(void) {
         return 0;
     }
     hos_log("hid: SDL controller support ready (DualSense, DualShock 4, Switch Pro, Xbox and others)");
+    void hos_triton_start(void);   /* pad_triton.c: the Steam Controller (2026)'s HD rumble, on its HID device */
+    hos_triton_start();
     return 1;
 }
 
@@ -332,6 +335,7 @@ static void pads_poll(void) {
                 pads[slot].rumble_lo = pads[slot].rumble_hi = 0;
                 pads[slot].rumble_ns = 0;
                 hd_open(slot, gc);
+                pads[slot].valve = hos_sdl_pad_vendor(gc) == 0x28DE;
                 pads[slot].motion = hos_sdl_pad_has_sensor(gc, HOS_SDL_SENSOR_GYRO) && hos_sdl_pad_has_sensor(gc, HOS_SDL_SENSOR_ACCEL);
                 pads[slot].motion_on = 0;
                 pads[slot].motion_retry_ns = 0;
@@ -408,6 +412,15 @@ static void pads_poll(void) {
                 if (sig != pads[i].input_sig) pads[i].input_sig = sig, pads[i].used_ns = now;
             }
             if (hd_poll(i, side, now)) continue;
+            /* (the Steam Controller (2026) plays the HD rumble on its own HID device, pad_triton.c: its pad here, or
+               Steam's virtual pad for it, gets no motor rumble meanwhile, which would fight it on the grips) */
+            int hos_triton_playing(void);
+            if (pads[i].valve && hos_triton_playing()) {
+                if (pads[i].rumble_lo || pads[i].rumble_hi) hos_sdl_pad_rumble(gc, 0, 0, 0);
+                pads[i].rumble_lo = pads[i].rumble_hi = 0;
+                pads[i].rumble_ns = now;
+                continue;
+            }
             if (rumble_due(lo, hi, pads[i].rumble_lo, pads[i].rumble_hi, now, pads[i].rumble_ns)) {
                 hos_sdl_pad_rumble(gc, lo, hi, lo || hi ? 1000 : 0);
                 pads[i].rumble_lo = lo;
@@ -497,6 +510,12 @@ void hos_sdl_pad_first_name(char *out, size_t cap) {
     AcquireSRWLockShared(&state_lock);
     snprintf(out, cap, "%s", state_name);
     ReleaseSRWLockShared(&state_lock);
+}
+
+/* The menu's Rumble strength in percent (100 the game's own): pad_triton.c's HD rumble scales by it too */
+int hos_sdl_rumble_percent(void) {
+    int rx_option(int id, int otherwise);
+    return rx_option(9, 100);
 }
 
 /* Vibration from the game (0..1 amplitudes of the low and high bands), for the pads that rumble. */
