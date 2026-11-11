@@ -21,6 +21,8 @@ static struct {
     /* controllers */
     void *PadOpen, *PadClose, *PadConnected, *PadsUpdate, *PadButton, *PadAxis, *PadName, *PadRumble;
     void *PadType, *PadEffect;   /* (optional: HD rumble, host/pad_sdl.c) */
+    void *PadVendor;   /* (optional: which pads are Valve's, host/pad_triton.c) */
+    void *HidInit, *HidEnumerate, *HidFreeEnumeration, *HidOpenPath, *HidWrite, *HidReadTimeout, *HidClose;   /* (optional) */
     void *PadHasSensor, *PadSensorEnable, *PadSensorData;   /* (motion: optional, NULL in an SDL without them) */
     void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2) */
@@ -67,6 +69,15 @@ static int get_all(HMODULE m, int three) {
     /* (SDL2 2.0.12 and 2.0.16 on, SDL3 3.2 on: without them every pad keeps the motor rumble) */
     *(FARPROC *)&f.PadType = GetProcAddress(m, three ? "SDL_GetGamepadType" : "SDL_GameControllerGetType");
     *(FARPROC *)&f.PadEffect = GetProcAddress(m, three ? "SDL_SendGamepadEffect" : "SDL_GameControllerSendEffect");
+    /* (the Steam Controller's HD rumble, host/pad_triton.c: SDL's HID calls, SDL2 2.0.18 on and every SDL3, the same names) */
+    *(FARPROC *)&f.PadVendor = GetProcAddress(m, three ? "SDL_GetGamepadVendor" : "SDL_GameControllerGetVendor");
+    *(FARPROC *)&f.HidInit = GetProcAddress(m, "SDL_hid_init");
+    *(FARPROC *)&f.HidEnumerate = GetProcAddress(m, "SDL_hid_enumerate");
+    *(FARPROC *)&f.HidFreeEnumeration = GetProcAddress(m, "SDL_hid_free_enumeration");
+    *(FARPROC *)&f.HidOpenPath = GetProcAddress(m, "SDL_hid_open_path");
+    *(FARPROC *)&f.HidWrite = GetProcAddress(m, "SDL_hid_write");
+    *(FARPROC *)&f.HidReadTimeout = GetProcAddress(m, "SDL_hid_read_timeout");
+    *(FARPROC *)&f.HidClose = GetProcAddress(m, "SDL_hid_close");
     /* (motion sensors: SDL 2.0.14 on and every SDL3; without them the pads still play, with no gyro) */
     *(FARPROC *)&f.PadHasSensor = GetProcAddress(m, three ? "SDL_GamepadHasSensor" : "SDL_GameControllerHasSensor");
     *(FARPROC *)&f.PadSensorEnable = GetProcAddress(m, three ? "SDL_SetGamepadSensorEnabled" : "SDL_GameControllerSetSensorEnabled");
@@ -614,6 +625,60 @@ int hos_sdl_pad_effect(void *pad, const void *data, int size) {
     if (version == 3) return CALL(_Bool (*)(void *, const void *, int), PadEffect)(pad, data, size);
     return CALL(int (*)(void *, const void *, int), PadEffect)(pad, data, size) == 0;
 }
+uint16_t hos_sdl_pad_vendor(void *pad) { return f.PadVendor ? CALL(uint16_t (*)(void *), PadVendor)(pad) : 0; }
+
+/* ---- (the Steam Controller's HD rumble, host/pad_triton.c) SDL's HID calls. SDL_hid_device_info is the same in both
+   up to interface_protocol; SDL3 then has bus_type before next. SDL_hid_open_path takes a bExclusive flag in SDL2. */
+struct hid_info_head {
+    char *path;
+    unsigned short vendor_id, product_id;
+    wchar_t *serial_number;
+    unsigned short release_number;
+    wchar_t *manufacturer_string, *product_string;
+    unsigned short usage_page, usage;
+    int interface_number, interface_class, interface_subclass, interface_protocol;
+};
+struct hid_info2 { struct hid_info_head h; struct hid_info2 *next; };
+struct hid_info3 { struct hid_info_head h; int bus_type; struct hid_info3 *next; };
+int hos_sdl_hid_available(void) {
+    return f.HidInit && f.HidEnumerate && f.HidFreeEnumeration && f.HidOpenPath && f.HidWrite && f.HidReadTimeout &&
+           f.HidClose;
+}
+int hos_sdl_hid_list(uint16_t vendor, HosHidDevice *out, int max) {
+    if (!hos_sdl_hid_available()) return 0;
+    CALL(int (*)(void), HidInit)();
+    void *list = CALL(void *(*)(unsigned short, unsigned short), HidEnumerate)(vendor, 0);
+    int n = 0;
+    for (void *d = list; d && n < max;) {
+        const struct hid_info_head *h = (const struct hid_info_head *)d;
+        if (h->path) {
+            snprintf(out[n].path, sizeof out[n].path, "%s", h->path);
+            out[n].product = h->product_id;
+            out[n].usage_page = h->usage_page;
+            out[n].interface_number = h->interface_number;
+            n++;
+        }
+        d = version == 3 ? (void *)((struct hid_info3 *)d)->next : (void *)((struct hid_info2 *)d)->next;
+    }
+    if (list) CALL(void (*)(void *), HidFreeEnumeration)(list);
+    return n;
+}
+void *hos_sdl_hid_open(const char *path) {
+    if (!hos_sdl_hid_available()) return NULL;
+    return version == 3 ? CALL(void *(*)(const char *), HidOpenPath)(path)
+                        : CALL(void *(*)(const char *, int), HidOpenPath)(path, 0);
+}
+int hos_sdl_hid_write(void *dev, const uint8_t *data, size_t size) {
+    return CALL(int (*)(void *, const unsigned char *, size_t), HidWrite)(dev, data, size);
+}
+int hos_sdl_hid_read(void *dev, uint8_t *data, size_t size, int ms) {
+    return CALL(int (*)(void *, unsigned char *, size_t, int), HidReadTimeout)(dev, data, size, ms);
+}
+void hos_sdl_hid_close(void *dev) {
+    if (version == 3) CALL(int (*)(void *), HidClose)(dev);
+    else CALL(void (*)(void *), HidClose)(dev);
+}
+
 /* (motion) type: HOS_SDL_SENSOR_ACCEL or _GYRO, the same numbers in both */
 int hos_sdl_pad_has_sensor(void *pad, int type) {
     if (!f.PadHasSensor || !f.PadSensorEnable || !f.PadSensorData) return 0;
