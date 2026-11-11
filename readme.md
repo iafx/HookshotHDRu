@@ -473,6 +473,13 @@ anything SDL reports as a Switch Pro Controller or Joy-Con, and that includes th
 (8BitDo, GameSir and others; SDL gives them Nintendo's ids). Some of them may turn it into weak rumble or none: set
 `HOS_HD_RUMBLE=0` to give them the plain motor rumble.
 
+A **Steam Controller (2026)** plays the HD rumble too, over its cable, its dongle or Bluetooth, with or without Steam:
+each grip plays both bands of its side as a wave, at the game's frequencies, and each trackpad plays its side's high
+band. Hookshot writes to the controller itself through SDL's HID calls, and sends it (or Steam Input's virtual pad for
+it) no motor rumble meanwhile. The menu's Rumble strength scales it. `HOS_TRITON_TRACKPADS=0` keeps the trackpads
+quiet; `HOS_TRITON_RUMBLE=0` gives the controller the motor rumble as before. On Linux it needs the same hidraw access
+as the Switch controllers (Steam's udev rules give it).
+
 To change which gamepad button or key presses a Switch button, or which keys move and turn the camera, open the
 Controls tab's Controls page. Choose a row and a column (Gamepad or Keyboard), press <kbd>Enter</kbd> (or the bottom
 face button), then the new button or key. <kbd>Esc</kbd> cancels, <kbd>Delete</kbd> clears it, and Reset to defaults

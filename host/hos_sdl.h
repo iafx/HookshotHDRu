@@ -4,6 +4,7 @@
    way (SDL3.dll and SDL2.dll; on Linux libSDL3.so.0 and libSDL2-2.0.so.0). HOS_SDL_VERSION=2 takes SDL2 even with an
    SDL3 there. */
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 int hos_sdl_load(void);   /* 3 or 2, the SDL loaded (the first call loads it); 0 when there is none */
@@ -80,6 +81,22 @@ void hos_sdl_pad_rumble(void *pad, uint16_t low, uint16_t high, uint32_t ms);
 int hos_sdl_pad_type(void *pad);
 int hos_sdl_pad_has_effect(void);
 int hos_sdl_pad_effect(void *pad, const void *data, int size);
+/* the pad's USB vendor id (0 unknown, or no such call) */
+uint16_t hos_sdl_pad_vendor(void *pad);
+/* (the Steam Controller's HD rumble, host/pad_triton.c) SDL's HID calls: whether the SDL has them; the HID collections
+   of a vendor's devices (up to max); a collection opened by its path (NULL when it will not open); a report written
+   (bytes written, -1 failed); a report read within ms (bytes read, 0 none, -1 failed); closed */
+typedef struct {
+    char path[512];
+    uint16_t product, usage_page;
+    int interface_number;
+} HosHidDevice;
+int hos_sdl_hid_available(void);
+int hos_sdl_hid_list(uint16_t vendor, HosHidDevice *out, int max);
+void *hos_sdl_hid_open(const char *path);
+int hos_sdl_hid_write(void *dev, const uint8_t *data, size_t size);
+int hos_sdl_hid_read(void *dev, uint8_t *data, size_t size, int ms);
+void hos_sdl_hid_close(void *dev);
 /* motion sensors (SDL_SENSOR_ACCEL m/s^2, SDL_SENSOR_GYRO rad/s, three values each): 0 when the pad or the SDL has none */
 enum { HOS_SDL_SENSOR_ACCEL = 1, HOS_SDL_SENSOR_GYRO = 2 };
 int hos_sdl_pad_has_sensor(void *pad, int type);
